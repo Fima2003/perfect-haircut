@@ -1,66 +1,141 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
+
+import Link from "next/link";
+import { useAuth } from "@/context/AuthContext";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 export default function Home() {
+  const { user, loading, signInWithGoogle } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.push("/dashboard");
+    }
+  }, [user, loading, router]);
+
+  if (loading) {
+    return <div className="loading-state"></div>;
+  }
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="hero-container">
+      <nav className="top-nav fade-in">
+        <div className="logo">Visage Analytics</div>
+        <div className="nav-links">
+          {user ? (
+            <Link href="/dashboard" className="luxury-button">Dashboard</Link>
+          ) : (
+            <button onClick={signInWithGoogle} className="luxury-button">
+              Sign In
+            </button>
+          )}
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </nav>
+
+      <section className="hero-content">
+        <h1 className="slide-up" style={{ animationDelay: "0.2s" }}>
+          Discover Your<br />
+          <span className="accent-text">Perfect Geometry.</span>
+        </h1>
+        <p className="slide-up subheadline" style={{ animationDelay: "0.4s" }}>
+          Advanced AI analysis of your facial thirds, symmetry, and projection. 
+          We determine the optimal haircut to balance your unique structural features.
+        </p>
+        <div className="cta-wrapper slide-up" style={{ animationDelay: "0.6s" }}>
+          <button onClick={signInWithGoogle} className="luxury-button pr-large">
+            Begin Analysis
+          </button>
         </div>
-      </main>
-    </div>
+      </section>
+
+      <style jsx>{`
+        .hero-container {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+          padding: 2rem 4rem;
+          overflow: hidden;
+        }
+
+        .hero-container::before {
+          content: "";
+          position: absolute;
+          top: -20%;
+          right: -10%;
+          width: 60vw;
+          height: 60vw;
+          background: radial-gradient(circle, var(--accent-muted) 0%, transparent 60%);
+          z-index: -1;
+          filter: blur(80px);
+        }
+
+        .top-nav {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding-bottom: 2rem;
+          border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+          font-family: var(--font-display);
+          font-size: 1.5rem;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+        }
+
+        .hero-content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          max-width: 800px;
+          margin-top: -5vh;
+        }
+
+        h1 {
+          font-size: clamp(3rem, 8vw, 6rem);
+          line-height: 1.1;
+          margin-bottom: 1.5rem;
+        }
+
+        .accent-text {
+          color: var(--accent);
+          font-style: italic;
+        }
+
+        .subheadline {
+          font-size: 1.2rem;
+          color: rgba(255, 255, 255, 0.7);
+          max-width: 600px;
+          margin-bottom: 3rem;
+          line-height: 1.8;
+          font-weight: 300;
+        }
+
+        .pr-large {
+          padding: 1rem 3rem;
+          font-size: 1rem;
+        }
+
+        .loading-state {
+          height: 100vh;
+          width: 100vw;
+          background: var(--background);
+        }
+
+        @media (max-width: 768px) {
+          .hero-container {
+            padding: 1.5rem;
+          }
+          .hero-content {
+            margin-top: 5vh;
+          }
+        }
+      `}</style>
+    </main>
   );
 }
