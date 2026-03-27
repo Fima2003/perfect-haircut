@@ -8,28 +8,34 @@ import { useRouter } from "next/navigation";
 import ImageComparisonSlider from "@/components/ImageComparisonSlider";
 
 const LOOKBOOK_PAIRS = [
+    {
+    name: "Trump",
+    before: "/images/trump.webp",
+    after: "/images/trump-cool.webp",
+    note: "Smoother silhouette and better side profile structure",
+  },
   {
     name: "Ronaldo",
     before: "/images/ronaldo.webp",
-    after: "/images/ronaldo-cool.jpg",
+    after: "/images/ronaldo-cool.webp",
+    note: "Sharper crown volume and stronger jaw framing",
+  },
+  {
+    name: "Halle",
+    before: "/images/halle.webp",
+    after: "/images/halle-cool.webp",
     note: "Sharper crown volume and stronger jaw framing",
   },
   {
     name: "Obama",
     before: "/images/obama.webp",
-    after: "/images/obama-cool.jpeg",
+    after: "/images/obama-cool.webp",
     note: "Cleaner temple gradient with balanced forehead weight",
   },
   {
-    name: "Trump",
-    before: "/images/trump.avif",
-    after: "/images/trump-cool.jpeg",
-    note: "Smoother silhouette and better side profile structure",
-  },
-  {
     name: "Baby",
-    before: "/images/baby.jpeg",
-    after: "/images/baby-cool.jpeg",
+    before: "/images/baby.webp",
+    after: "/images/baby-cool.webp",
     note: "Soft texture flow with proportional face opening",
   },
 ];
