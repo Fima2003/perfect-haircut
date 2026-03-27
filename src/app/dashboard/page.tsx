@@ -1,8 +1,9 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
+import ImageComparisonSlider from "@/components/ImageComparisonSlider";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
+import { useEffect, useState, useRef, type CSSProperties } from "react";
 import { Upload, Loader2 } from "lucide-react";
 
 type AnalysisData = {
@@ -31,7 +32,7 @@ const DEFAULT_POSITIONS: DotPositions = {
 };
 
 export default function Dashboard() {
-  const { user, loading } = useAuth();
+  const { user, loading, signOut } = useAuth();
   const router = useRouter();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -43,24 +44,36 @@ export default function Dashboard() {
   const [hairstyleNames, setHairstyleNames] = useState<string[]>([]);
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
-  // Slider comparison state
-  const [selectedStyle, setSelectedStyle] = useState<number | null>(null); // null = "Original"
-  const [sliderPos, setSliderPos] = useState(50); // percent 0–100
-  const isDragging = useRef(false);
-  const sliderContainerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [generatingStyleIndex, setGeneratingStyleIndex] = useState<number | null>(null);
 
-  // Must be declared before any early return to satisfy Rules of Hooks
-  const updateSliderPosition = useCallback((clientX: number) => {
-    if (!isDragging.current || !sliderContainerRef.current) return;
-    const rect = sliderContainerRef.current.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
-    setSliderPos(pct);
-  }, []);
+  const [selectedStyle, setSelectedStyle] = useState<number | null>(null); // null = "Original"
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push("/");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    return () => {
+      // Cleanup camera stream on unmount
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch((err) => console.error("Camera play error:", err));
+    }
+  }, [cameraOpen]);
 
   if (loading || !user) return <div className="loading-state" />;
 
@@ -70,11 +83,19 @@ export default function Dashboard() {
       setSelectedFile(file);
       setPreview(URL.createObjectURL(file));
     }
+
+    // Allow selecting the same file again (including re-taking a photo on some devices)
+    e.currentTarget.value = "";
   };
 
   const handleAnalyze = async () => {
     if (!selectedFile) return;
     setAnalyzing(true);
+    setAnalysisResult(null);
+    setHairstyleNames([]);
+    setHairstyleImages([]);
+    setGeneratingStyleIndex(null);
+
     try {
       const formData = new FormData();
       formData.append("image", selectedFile);
@@ -83,9 +104,7 @@ export default function Dashboard() {
       const data = await res.json();
       setAnalysisResult(data.analysis);
       setDotPositions(data.dot_positions || DEFAULT_POSITIONS);
-      setHairstyleImages(data.hairstyles || []);
-      // Parse style names from best_styles_summary via dot_positions keys or fallback
-      // The API sends hairstyles in the same order as best_styles_summary
+      
       const names = (data.best_styles_summary || "")
         .split(",")
         .map((s: string) => s.trim())
@@ -93,13 +112,99 @@ export default function Dashboard() {
         .slice(0, 3);
       setHairstyleNames(names);
       setSelectedStyle(null);
-      setSliderPos(50);
+
+      // We turn off the main analysis spinner so the user can read the results,
+      // but we now start generating the individual images.
+      setAnalyzing(false); 
+
+      // Send requests for each style sequentially
+      const images: string[] = [];
+      for (let i = 0; i < names.length; i++) {
+        setGeneratingStyleIndex(i);
+        const styleName = names[i];
+        try {
+          const styleData = new FormData();
+          styleData.append("image", selectedFile);
+          styleData.append("style", styleName);
+          
+          const styleRes = await fetch("/api/analyze/style", { method: "POST", body: styleData });
+          if (!styleRes.ok) throw new Error(`Failed to generate ${styleName}`);
+          
+          const styleJson = await styleRes.json();
+          images[i] = styleJson.image;
+        } catch (err) {
+          console.error(err);
+          images[i] = ""; // keep array synced
+        }
+        setHairstyleImages([...images]);
+      }
+      setGeneratingStyleIndex(null);
+
     } catch (err) {
       console.error(err);
       alert("Failed to analyze image. Please check API keys.");
-    } finally {
       setAnalyzing(false);
     }
+  };
+
+  const openCamera = async () => {
+    // Prefer in-browser camera capture when available (more reliable than input[capture] on some platforms)
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      cameraInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch {
+      // Permission denied / not available; fall back to file capture input
+      cameraInputRef.current?.click();
+    }
+  };
+
+  const closeCamera = () => {
+    setCameraOpen(false);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  };
+
+  const takeSnapshot = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    
+    // Mirror the canvas context so the snapshot matches the mirrored video preview
+    ctx.translate(width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, width, height);
+
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) return;
+
+    const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+    setSelectedFile(file);
+    setPreview(URL.createObjectURL(file));
+    closeCamera();
   };
 
   const handleReset = () => {
@@ -113,20 +218,12 @@ export default function Dashboard() {
     setActiveTooltip(null);
   };
 
-  // ── Drag handlers for the slider ──
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    isDragging.current = true;
-    updateSliderPosition(e.clientX);
+  const handleSignOut = async () => {
+    await signOut();
+    router.push("/");
   };
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    updateSliderPosition(e.clientX);
-  };
-
-  const handlePointerUp = () => { isDragging.current = false; };
-
-  const isComparing = selectedStyle !== null && hairstyleImages[selectedStyle];
+  const isComparing = selectedStyle !== null && Boolean(hairstyleImages[selectedStyle]);
   const activeStyleImg = isComparing ? hairstyleImages[selectedStyle!] : null;
 
   return (
@@ -135,6 +232,7 @@ export default function Dashboard() {
         <div className="logo">Visage Analytics</div>
         <div className="user-profile">
           <span className="user-email">{user.email}</span>
+          <button className="signout-button" onClick={handleSignOut}>Sign out</button>
         </div>
       </header>
 
@@ -146,56 +244,59 @@ export default function Dashboard() {
             <h2 className="section-title">Geometric Assessment</h2>
 
             {!preview ? (
-              <div className="upload-box" onClick={() => fileInputRef.current?.click()}>
-                <div className="upload-icon-wrapper"><Upload size={32} /></div>
-                <p>Upload Front-Facing Portrait</p>
-                <span className="upload-hint">Ensure good lighting and neutral expression.</span>
+              <>
+                <div className="upload-box" onClick={() => fileInputRef.current?.click()}>
+                  <div className="upload-icon-wrapper"><Upload size={32} /></div>
+                  <p>Upload Front-Facing Portrait</p>
+                  <span className="upload-hint">Ensure good lighting and neutral expression.</span>
+                </div>
+
+                <div className="upload-actions">
+                  <button
+                    type="button"
+                    className="luxury-button"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Choose file
+                  </button>
+                  <button
+                    type="button"
+                    className="luxury-button"
+                    onClick={() => void openCamera()}
+                  >
+                    Take photo
+                  </button>
+                </div>
+
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" hidden />
-              </div>
+                <input
+                  type="file"
+                  ref={cameraInputRef}
+                  onChange={handleFileSelect}
+                  accept="image/*;capture=camera"
+                  capture="user"
+                  hidden
+                />
+              </>
             ) : (
               <div className="preview-container fade-in">
 
                 {/* ── IMAGE / SLIDER AREA ── */}
                 <div
-                  ref={sliderContainerRef}
-                  className={`image-wrapper ${isComparing ? "comparing" : ""}`}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                  onPointerLeave={handlePointerUp}
-                  onPointerCancel={handlePointerUp}
+                  className={`image-wrapper ${isComparing ? "comparing" : ""} ${analysisResult && !isComparing ? "show-tooltips" : ""}`}
                 >
-                  {/* Always render the original */}
-                  <img src={preview} alt="Original" className="uploaded-image base-image" />
-
-                  {/* Overlay the hairstyle using clip-path */}
-                  {isComparing && activeStyleImg && (
-                    <>
-                      <img
-                        src={activeStyleImg}
-                        alt="New hairstyle"
-                        className="uploaded-image overlay-image"
-                        style={{ clipPath: `inset(0 0 0 ${sliderPos}%)` }}
-                        draggable={false}
-                      />
-
-                      {/* Divider bar */}
-                      <div
-                        className="slider-divider"
-                        style={{ left: `${sliderPos}%` }}
-                        onPointerDown={handlePointerDown}
-                      >
-                        <div className="slider-handle">
-                          <span>‹</span>
-                          <span>›</span>
-                        </div>
-                      </div>
-
-                      {/* Labels */}
-                      <div className="compare-label compare-label-left">Original</div>
-                      <div className="compare-label compare-label-right">
-                        {hairstyleNames[selectedStyle!] || `Style ${selectedStyle! + 1}`}
-                      </div>
-                    </>
+                  {isComparing && activeStyleImg ? (
+                    <ImageComparisonSlider
+                      key={`${preview}-${activeStyleImg}`}
+                      leftImage={preview}
+                      rightImage={activeStyleImg}
+                      leftLabel="Original"
+                      rightLabel={hairstyleNames[selectedStyle!] || `Style ${selectedStyle! + 1}`}
+                      leftAlt="Original"
+                      rightAlt="New hairstyle"
+                    />
+                  ) : (
+                    <img src={preview} alt="Original" className="uploaded-image base-image" />
                   )}
 
                   {/* Scan overlay */}
@@ -203,6 +304,15 @@ export default function Dashboard() {
                     <div className="scan-overlay">
                       <div className="scan-line" />
                       <div className="scan-label">Analyzing biometrics…</div>
+                    </div>
+                  )}
+
+                  {generatingStyleIndex !== null && (
+                    <div className="scan-overlay" style={{ background: "rgba(0,0,0,0.7)" }}>
+                      <Loader2 className="spinner" size={32} style={{ color: "var(--accent)", marginBottom: "1rem" }} />
+                      <div style={{ textAlign: "center", lineHeight: 1.5, fontSize: "1rem", letterSpacing: "0.05em", color: "var(--foreground)" }}>
+                        Generating how you will look<br/>with <span style={{ color: "var(--accent)", fontWeight: 600 }}>{hairstyleNames[generatingStyleIndex]}</span>...
+                      </div>
                     </div>
                   )}
 
@@ -232,7 +342,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* ── STYLE PICKER ── */}
-                {hairstyleImages.length > 0 && (
+                {hairstyleNames.length > 0 && (
                   <div className="style-picker fade-in">
                     {/* Original pill */}
                     <button
@@ -243,15 +353,22 @@ export default function Dashboard() {
                     </button>
 
                     {/* One pill per generated hairstyle */}
-                    {hairstyleImages.map((_, idx) => (
-                      <button
-                        key={idx}
-                        className={`style-pill ${selectedStyle === idx ? "active" : ""}`}
-                        onClick={() => { setSelectedStyle(idx); setSliderPos(50); }}
-                      >
-                        {hairstyleNames[idx] || `Style ${idx + 1}`}
-                      </button>
-                    ))}
+                    {hairstyleNames.map((name, idx) => {
+                      const isReady = !!hairstyleImages[idx];
+                      const isGenerating = generatingStyleIndex === idx;
+                      return (
+                        <button
+                          key={idx}
+                          className={`style-pill ${selectedStyle === idx ? "active" : ""} ${(!isReady && !isGenerating) ? "pending" : ""}`}
+                          onClick={() => { if (isReady) setSelectedStyle(idx); }}
+                          disabled={!isReady && !isGenerating}
+                          style={!isReady && !isGenerating ? { opacity: 0.3, cursor: "not-allowed" } : {}}
+                        >
+                          {name}
+                          {isGenerating && <Loader2 size={12} className="spinner" style={{ marginLeft: "6px", display: "inline" }} />}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -265,6 +382,22 @@ export default function Dashboard() {
                 <button className="reset-button mt-2" onClick={handleReset} disabled={analyzing}>
                   Reset
                 </button>
+              </div>
+            )}
+
+            {cameraOpen && (
+              <div className="camera-overlay" role="dialog" aria-modal="true">
+                <div className="camera-panel">
+                  <video ref={videoRef} className="camera-video" playsInline autoPlay muted />
+                  <div className="camera-actions">
+                    <button type="button" className="luxury-button" onClick={() => void takeSnapshot()}>
+                      Capture
+                    </button>
+                    <button type="button" className="reset-button" onClick={closeCamera}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -317,7 +450,29 @@ export default function Dashboard() {
           padding: 2rem 4rem; border-bottom: 1px solid var(--border);
         }
         .logo { font-family: var(--font-display); letter-spacing: 0.1em; text-transform: uppercase; }
+        .user-profile {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
         .user-email { font-size: 0.9rem; opacity: 0.7; letter-spacing: 0.05em; }
+        .signout-button {
+          background: transparent;
+          border: 1px solid var(--border);
+          color: var(--foreground);
+          padding: 0.35rem 0.8rem;
+          font-size: 0.72rem;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          cursor: pointer;
+          opacity: 0.8;
+          transition: all 0.2s ease;
+        }
+        .signout-button:hover {
+          border-color: var(--accent);
+          color: var(--accent);
+          opacity: 1;
+        }
 
         .dash-content { flex: 1; padding: 4rem; max-width: 1600px; margin: 0 auto; width: 100%; }
 
@@ -340,28 +495,86 @@ export default function Dashboard() {
         .upload-box p { font-family: var(--font-display); font-size: 1.5rem; margin-bottom: 0.5rem; }
         .upload-hint { font-size: 0.85rem; opacity: 0.5; }
 
+        .upload-actions {
+          display: flex;
+          gap: 0.75rem;
+          margin-top: 1.5rem;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+
+        .camera-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.7);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 200;
+          padding: 1.5rem;
+        }
+        .camera-panel {
+          width: min(720px, 100%);
+          border: 1px solid var(--border);
+          background: rgba(0,0,0,0.9);
+        }
+        .camera-video {
+          width: 100%;
+          height: 420px;
+          object-fit: cover;
+          display: block;
+          background: #000;
+          transform: scaleX(-1);
+        }
+        .camera-actions {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          align-items: center;
+          justify-content: center;
+          padding: 1.5rem 1rem;
+          border-top: 1px solid var(--border);
+        }
+        .camera-actions .reset-button {
+          margin-top: 0;
+          color: #fff;
+        }
+
         .preview-container { display: flex; flex-direction: column; }
 
         /* IMAGE WRAPPER */
         .image-wrapper {
           position: relative; width: 100%;
+          height: 520px;
           overflow: hidden; border: 1px solid var(--border);
           user-select: none; background: #000;
         }
+        .image-wrapper.show-tooltips {
+          overflow: visible;
+        }
         .image-wrapper.comparing { cursor: col-resize; }
 
-        /* Base image drives the container height naturally */
+        /* Base image fills the fixed wrapper */
         .base-image {
           position: relative;
-          width: 100%; height: auto; display: block;
-          object-fit: contain;
+          width: 100%; height: 100%; display: block;
+          object-fit: contain; object-position: center;
           filter: grayscale(20%) contrast(1.1);
+        }
+
+        /* Ensure the comparison slider also fits the fixed wrapper */
+        .image-wrapper :global(.comparison-slider-root) {
+          height: 100%;
+        }
+        .image-wrapper :global(.comparison-slider-root img) {
+          height: 100%;
+          object-fit: contain;
         }
         /* Overlay sits on top at exact same size/position */
         .overlay-image {
           position: absolute; inset: 0;
           width: 100%; height: 100%;
-          object-fit: contain; object-position: top center;
+          object-fit: contain; object-position: center;
           z-index: 2;
         }
 
@@ -448,7 +661,7 @@ export default function Dashboard() {
         @keyframes scanDown { 0% { top: 0; } 100% { top: 100%; } }
 
         /* FACE DOTS */
-        .face-dot-wrapper { position: absolute; transform: translate(-50%, -50%); cursor: pointer; z-index: 10; }
+        .face-dot-wrapper { position: absolute; transform: translate(-50%, -50%); cursor: pointer; z-index: 40; }
         .face-dot {
           width: 12px; height: 12px; border-radius: 50%;
           background: var(--dot-color); box-shadow: 0 0 8px var(--dot-color);
@@ -472,7 +685,7 @@ export default function Dashboard() {
           padding: 0.75rem 1rem; width: 240px;
           font-size: 0.85rem; line-height: 1.6; color: #f4f4f5;
           box-shadow: 0 8px 32px rgba(0,0,0,0.8); pointer-events: none;
-          animation: tooltipIn 0.15s ease; z-index: 20;
+          animation: tooltipIn 0.15s ease; z-index: 120;
         }
         .dot-tooltip::after {
           content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
@@ -530,6 +743,11 @@ export default function Dashboard() {
           .analysis-grid { grid-template-columns: 1fr; }
           .dash-content { padding: 2rem; }
           .dash-header { padding: 1.5rem 2rem; }
+          .image-wrapper { height: 420px; }
+        }
+
+        @media (max-width: 480px) {
+          .image-wrapper { height: 360px; }
         }
       `}</style>
     </div>

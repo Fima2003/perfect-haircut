@@ -26,76 +26,6 @@ Final Output: Return ONLY a valid JSON object with exactly these keys. No markdo
   - "vertical_proportions": { "x": <number>, "y": <number> } — tip of the nose (midpoint vertically)
   - "jawline_projection": { "x": <number>, "y": <number> } — center of the chin`;
 
-// Generate one image per hairstyle — separate API call each time.
-// The prompt is intentionally very strict: ONLY the hair changes, everything else is preserved.
-async function generateHairstylesWithNanoBanana2(stylesCSV: string, base64Image: string, mimeType: string) {
-  if (!geminiApiKey) {
-    console.warn("[Nano Banana] API Key missing — returning placeholders");
-    return [
-      "https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=200&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?q=80&w=200&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1620054363297-bca9e944b58e?q=80&w=200&auto=format&fit=crop",
-    ];
-  }
-
-  // Split comma-separated list of styles and take up to 3
-  const styles = stylesCSV.split(",").map(s => s.trim()).filter(Boolean).slice(0, 3);
-  console.log(`[Nano Banana] Will generate ${styles.length} images for styles:`, styles);
-
-  const images: string[] = [];
-
-  for (const style of styles) {
-    try {
-      console.log(`[Nano Banana] Generating image for style: "${style}"`);
-
-      const prompt = [
-        {
-          text:
-            `You are a professional hair stylist photo editor. ` +
-            `Apply ONLY the hairstyle "${style}" to the person in this photo. ` +
-            `CRITICAL RULES — do NOT violate any of these:\n` +
-            `1. Change ONLY the hair — style, length, texture, and volume.\n` +
-            `2. Do NOT change the head angle, face direction, or pose in any way.\n` +
-            `3. Do NOT change the background, clothing, skin tone, facial features, lighting, or expression.\n` +
-            `4. The face must remain facing exactly the same direction as in the original image.\n` +
-            `5. Output exactly one photorealistic edited image. No collages, no side-by-sides, no before/after.`,
-        },
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: base64Image,
-          },
-        },
-      ];
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-image-preview",
-        contents: prompt,
-      });
-
-      const parts = response.candidates?.[0]?.content?.parts || [];
-      let foundImage = false;
-      for (const part of parts) {
-        if (part.inlineData && !foundImage) {
-          const imgMimeType = part.inlineData.mimeType || "image/png";
-          const dataStr = part.inlineData.data || "";
-          images.push(`data:${imgMimeType};base64,${dataStr}`);
-          console.log(`[Nano Banana] ✓ Image captured for "${style}" (${dataStr.length} chars)`);
-          foundImage = true; // only take the first image per style call
-        }
-      }
-      if (!foundImage) {
-        console.warn(`[Nano Banana] No image returned for style "${style}"`);
-      }
-    } catch (err) {
-      console.error(`[Nano Banana] Error generating style "${style}":`, err);
-    }
-  }
-
-  console.log(`[Nano Banana] Done. ${images.length}/${styles.length} images generated.`);
-  return images;
-}
-
 export async function POST(req: NextRequest) {
   try {
     console.log("\n--- [API Route] Incoming POST Request to /api/analyze ---");
@@ -114,8 +44,13 @@ export async function POST(req: NextRequest) {
 
     if (!geminiApiKey) {
       return NextResponse.json({
-        analysis: "Simulated analysis: High symmetry, balanced thirds. Suggested styles: Textured Crop, Buzz Cut, Classic Taper.",
-        hairstyles: await generateHairstylesWithNanoBanana2("Textured Crop, Buzz Cut, Classic Taper.", base64Image, file.type)
+        analysis: {
+          facial_thirds: "Simulated face thirds",
+          symmetry: "High symmetry",
+          vertical_proportions: "Balanced",
+          jawline_projection: "Strong",
+        },
+        best_styles_summary: "Textured Crop, Buzz Cut, Classic Taper",
       });
     }
 
@@ -155,13 +90,8 @@ export async function POST(req: NextRequest) {
       stylesToGenerate = textResult;
     }
 
-    // 2. Send to Nano Banana 2
-    console.log(`[API Route] 2. Forwarding base image and suggested styles into Nano Banana 2...`);
-    const generatedImages = await generateHairstylesWithNanoBanana2(stylesToGenerate, base64Image, file.type);
-
     // Filter to limit to 3 hairstyles as requested
-    const limitedImages = generatedImages.slice(0, 3);
-    console.log(`[API Route] Finished operations. Sending successful payload to client with ${limitedImages.length} images.`);
+    // Removed Nano Banana 2 step directly in this endpoint. Will send response back to client to show intermediate.
 
     return NextResponse.json({
       analysis: {
@@ -172,7 +102,6 @@ export async function POST(req: NextRequest) {
       },
       dot_positions: dotPositions,
       best_styles_summary: stylesToGenerate,
-      hairstyles: limitedImages
     });
 
   } catch (error: unknown) {
