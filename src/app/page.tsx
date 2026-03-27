@@ -5,12 +5,13 @@ import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import ImageComparisonSlider from "@/components/ImageComparisonSlider";
 
 const LOOKBOOK_PAIRS = [
   {
-    name: "Brad",
-    before: "/images/brad.jpg",
-    after: "/images/brad-cool.jpeg",
+    name: "Ronaldo",
+    before: "/images/ronaldo.webp",
+    after: "/images/ronaldo-cool.jpg",
     note: "Sharper crown volume and stronger jaw framing",
   },
   {
@@ -97,26 +98,16 @@ export default function Home() {
         <div className="hero-preview fade-in" style={{ animationDelay: "0.2s" }}>
           <div className="preview-header">
             <span>Featured Comparison</span>
-            <span>Hover to Reveal</span>
+            <span>Drag to Reveal</span>
           </div>
           <div className="compare-shell">
-            <Image
-              src={LOOKBOOK_PAIRS[0].before}
-              alt={`${LOOKBOOK_PAIRS[0].name} before haircut optimization`}
-              fill
-              className="compare-image"
-              sizes="(max-width: 1024px) 100vw, 45vw"
+            <ImageComparisonSlider
+              leftImage={LOOKBOOK_PAIRS[0].before}
+              rightImage={LOOKBOOK_PAIRS[0].after}
+              leftLabel="Original"
+              rightLabel="Optimized"
+              objectFit="cover"
             />
-            <Image
-              src={LOOKBOOK_PAIRS[0].after}
-              alt={`${LOOKBOOK_PAIRS[0].name} after haircut optimization`}
-              fill
-              className="compare-image compare-image-after"
-              sizes="(max-width: 1024px) 100vw, 45vw"
-            />
-            <div className="compare-divider" />
-            <div className="compare-chip chip-left">Original</div>
-            <div className="compare-chip chip-right">Optimized</div>
           </div>
           <p className="preview-note">{LOOKBOOK_PAIRS[0].note}</p>
         </div>
@@ -125,29 +116,19 @@ export default function Home() {
       <section className="lookbook-section">
         <div className="section-header">
           <h2>Before / After Lookbook</h2>
-          <p>Real pair previews from your uploaded set. Hover each card to scrub the split.</p>
+          <p>Real pair previews from your uploaded set. Drag each slider to reveal the split.</p>
         </div>
         <div className="lookbook-grid">
           {LOOKBOOK_PAIRS.map((pair, idx) => (
             <article className="lookbook-card slide-up" key={pair.name} style={{ animationDelay: `${0.1 * idx}s` }}>
               <div className="compare-shell card-shell">
-                <Image
-                  src={pair.before}
-                  alt={`${pair.name} before`}
-                  fill
-                  className="compare-image"
-                  sizes="(max-width: 1024px) 100vw, (max-width: 1300px) 50vw, 25vw"
+                <ImageComparisonSlider
+                  leftImage={pair.before}
+                  rightImage={pair.after}
+                  leftLabel="Before"
+                  rightLabel="After"
+                  objectFit="cover"
                 />
-                <Image
-                  src={pair.after}
-                  alt={`${pair.name} optimized haircut`}
-                  fill
-                  className="compare-image compare-image-after"
-                  sizes="(max-width: 1024px) 100vw, (max-width: 1300px) 50vw, 25vw"
-                />
-                <div className="compare-divider" />
-                <div className="compare-chip chip-left">Before</div>
-                <div className="compare-chip chip-right">After</div>
               </div>
               <div className="card-copy">
                 <h3>{pair.name}</h3>
@@ -333,53 +314,13 @@ export default function Home() {
         }
 
         .compare-shell {
-          --split: 56%;
           position: relative;
           width: 100%;
           aspect-ratio: 4 / 5;
           overflow: hidden;
           background: #0f0f11;
           border: 1px solid rgba(255,255,255,0.15);
-          transition: --split 0.35s ease;
         }
-        .compare-shell:hover {
-          --split: 22%;
-        }
-
-        .compare-image {
-          object-fit: cover;
-        }
-
-        .compare-image-after {
-          clip-path: inset(0 0 0 var(--split));
-          transition: clip-path 0.35s ease;
-        }
-
-        .compare-divider {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          left: var(--split);
-          width: 2px;
-          background: #fff;
-          transform: translateX(-50%);
-          transition: left 0.35s ease;
-          box-shadow: 0 0 16px rgba(255,255,255,0.45);
-        }
-
-        .compare-chip {
-          position: absolute;
-          bottom: 0.75rem;
-          padding: 0.3rem 0.5rem;
-          font-size: 0.62rem;
-          letter-spacing: 0.1em;
-          text-transform: uppercase;
-          background: rgba(0,0,0,0.55);
-          border: 1px solid rgba(255,255,255,0.2);
-          color: #fff;
-        }
-        .chip-left { left: 0.7rem; }
-        .chip-right { right: 0.7rem; }
 
         .preview-note {
           margin: 0.8rem 0 0;

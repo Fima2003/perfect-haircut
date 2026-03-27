@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import ImageComparisonSlider from "@/components/ImageComparisonSlider";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type CSSProperties } from "react";
-import { Upload, Loader2 } from "lucide-react";
+import { Upload, Loader2, Download } from "lucide-react";
 
 type AnalysisData = {
   facial_thirds: string;
@@ -264,6 +264,17 @@ export default function Dashboard() {
   const isComparing = selectedStyle !== null && Boolean(hairstyleImages[selectedStyle]);
   const activeStyleImg = isComparing ? hairstyleImages[selectedStyle!] : null;
 
+  const handleDownload = () => {
+    if (!activeStyleImg) return;
+    const a = document.createElement("a");
+    a.href = activeStyleImg;
+    const name = hairstyleNames[selectedStyle!] || "style";
+    a.download = `perfect-haircut-${name.replace(/\s+/g, '-').toLowerCase()}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const isProcessing = analyzing || analysisResult !== null || generatingStyleIndex !== null;
 
   return (
@@ -332,17 +343,26 @@ export default function Dashboard() {
                   className={`image-wrapper ${isComparing ? "comparing" : ""} ${analysisResult && !isComparing ? "show-tooltips" : ""}`}
                 >
                   {isComparing && activeStyleImg ? (
-                    <ImageComparisonSlider
-                      key={`${preview}-${activeStyleImg}`}
-                      leftImage={preview}
-                      rightImage={activeStyleImg}
-                      leftLabel="Original"
-                      rightLabel={hairstyleNames[selectedStyle!] || `Style ${selectedStyle! + 1}`}
-                      leftAlt="Original"
-                      rightAlt="New hairstyle"
-                    />
+                    <>
+                      <ImageComparisonSlider
+                        key={`${preview}-${activeStyleImg}`}
+                        leftImage={preview!}
+                        rightImage={activeStyleImg}
+                        leftLabel="Original"
+                        rightLabel={hairstyleNames[selectedStyle!] || `Style ${selectedStyle! + 1}`}
+                        leftAlt="Original"
+                        rightAlt="New hairstyle"
+                      />
+                      <button 
+                        className="download-btn"
+                        onClick={handleDownload}
+                        title="Download Style"
+                      >
+                        <Download size={20} />
+                      </button>
+                    </>
                   ) : (
-                    <img src={preview} alt="Original" className="uploaded-image base-image" />
+                    <img src={preview!} alt="Original" className="uploaded-image base-image" />
                   )}
 
                   {/* Scan overlay */}
@@ -587,6 +607,31 @@ export default function Dashboard() {
           overflow: visible;
         }
         .image-wrapper.comparing { cursor: col-resize; }
+
+        .download-btn {
+          position: absolute;
+          top: 12px;
+          right: 12px;
+          z-index: 20;
+          background: rgba(0, 0, 0, 0.6);
+          color: white;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 6px;
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          backdrop-filter: blur(4px);
+          transition: all 0.2s ease;
+        }
+        .download-btn:hover {
+          background: rgba(0, 0, 0, 0.8);
+          transform: scale(1.05);
+          color: var(--accent);
+          border-color: var(--accent);
+        }
 
         /* Base image fills the fixed wrapper */
         .base-image {

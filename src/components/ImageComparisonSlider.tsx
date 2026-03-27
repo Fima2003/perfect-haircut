@@ -9,6 +9,7 @@ type ImageComparisonSliderProps = {
   rightLabel?: string;
   leftAlt?: string;
   rightAlt?: string;
+  objectFit?: "cover" | "contain";
 };
 
 export default function ImageComparisonSlider({
@@ -18,6 +19,7 @@ export default function ImageComparisonSlider({
   rightLabel = "After",
   leftAlt = "Left image",
   rightAlt = "Right image",
+  objectFit = "contain",
 }: ImageComparisonSliderProps) {
   const [position, setPosition] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
@@ -75,7 +77,7 @@ export default function ImageComparisonSlider({
           width: "100%",
           height: "100%",
           display: "block",
-          objectFit: "contain",
+          objectFit: objectFit,
           filter: "grayscale(20%) contrast(1.1)",
         }}
       />
@@ -89,7 +91,7 @@ export default function ImageComparisonSlider({
           inset: 0,
           width: "100%",
           height: "100%",
-          objectFit: "contain",
+          objectFit: objectFit,
           objectPosition: "center",
           clipPath: `inset(0 0 0 ${position}%)`,
           zIndex: 2,
