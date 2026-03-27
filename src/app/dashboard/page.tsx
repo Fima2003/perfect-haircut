@@ -13,8 +13,6 @@ type AnalysisData = {
   jawline_projection: string;
 };
 
-type DotPositions = Record<string, { x: number; y: number }>;
-type DotColorStyle = CSSProperties & { "--dot-color": string };
 type CardColorStyle = CSSProperties & { "--card-color": string };
 
 const FACE_DOTS = [
@@ -24,12 +22,6 @@ const FACE_DOTS = [
   { key: "jawline_projection" as const,    label: "Jawline",       icon: "◆", color: "#e07272" },
 ];
 
-const DEFAULT_POSITIONS: DotPositions = {
-  facial_thirds:        { x: 50, y: 18 },
-  symmetry:             { x: 50, y: 38 },
-  vertical_proportions: { x: 50, y: 55 },
-  jawline_projection:   { x: 50, y: 78 },
-};
 
 export default function Dashboard() {
   const { user, loading, signOut } = useAuth();
@@ -39,18 +31,18 @@ export default function Dashboard() {
   const [preview, setPreview] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisData | null>(null);
-  const [dotPositions, setDotPositions] = useState<DotPositions>(DEFAULT_POSITIONS);
   const [hairstyleImages, setHairstyleImages] = useState<string[]>([]);
   const [hairstyleNames, setHairstyleNames] = useState<string[]>([]);
-  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
   const [generatingStyleIndex, setGeneratingStyleIndex] = useState<number | null>(null);
 
   const [selectedStyle, setSelectedStyle] = useState<number | null>(null); // null = "Original"
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -77,19 +69,54 @@ export default function Dashboard() {
 
   if (loading || !user) return <div className="loading-state" />;
 
+  const processFile = (file: File) => {
+    if (file && file.type.startsWith("image/")) {
+      setSelectedFile(file);
+      setPreview(URL.createObjectURL(file));
+    } else if (file) {
+      alert("Please upload an image file.");
+    }
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setSelectedFile(file);
-      setPreview(URL.createObjectURL(file));
+      processFile(file);
     }
 
     // Allow selecting the same file again (including re-taking a photo on some devices)
     e.currentTarget.value = "";
   };
 
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!selectedFile) return;
+    
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    const signal = abortController.signal;
+
     setAnalyzing(true);
     setAnalysisResult(null);
     setHairstyleNames([]);
@@ -99,11 +126,12 @@ export default function Dashboard() {
     try {
       const formData = new FormData();
       formData.append("image", selectedFile);
-      const res = await fetch("/api/analyze", { method: "POST", body: formData });
+      const res = await fetch("/api/analyze", { method: "POST", body: formData, signal });
       if (!res.ok) throw new Error("Analysis failed");
       const data = await res.json();
+      if (signal.aborted) return;
+      
       setAnalysisResult(data.analysis);
-      setDotPositions(data.dot_positions || DEFAULT_POSITIONS);
       
       const names = (data.best_styles_summary || "")
         .split(",")
@@ -120,6 +148,7 @@ export default function Dashboard() {
       // Send requests for each style sequentially
       const images: string[] = [];
       for (let i = 0; i < names.length; i++) {
+        if (signal.aborted) return;
         setGeneratingStyleIndex(i);
         const styleName = names[i];
         try {
@@ -127,12 +156,14 @@ export default function Dashboard() {
           styleData.append("image", selectedFile);
           styleData.append("style", styleName);
           
-          const styleRes = await fetch("/api/analyze/style", { method: "POST", body: styleData });
+          const styleRes = await fetch("/api/analyze/style", { method: "POST", body: styleData, signal });
           if (!styleRes.ok) throw new Error(`Failed to generate ${styleName}`);
           
           const styleJson = await styleRes.json();
+          if (signal.aborted) return;
           images[i] = styleJson.image;
-        } catch (err) {
+        } catch (err: any) {
+          if (err.name === 'AbortError') return;
           console.error(err);
           images[i] = ""; // keep array synced
         }
@@ -140,7 +171,11 @@ export default function Dashboard() {
       }
       setGeneratingStyleIndex(null);
 
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Analysis aborted");
+        return;
+      }
       console.error(err);
       alert("Failed to analyze image. Please check API keys.");
       setAnalyzing(false);
@@ -208,14 +243,17 @@ export default function Dashboard() {
   };
 
   const handleReset = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setAnalyzing(false);
+    setGeneratingStyleIndex(null);
     setPreview(null);
     setSelectedFile(null);
     setAnalysisResult(null);
-    setDotPositions(DEFAULT_POSITIONS);
     setHairstyleImages([]);
     setHairstyleNames([]);
     setSelectedStyle(null);
-    setActiveTooltip(null);
   };
 
   const handleSignOut = async () => {
@@ -225,6 +263,8 @@ export default function Dashboard() {
 
   const isComparing = selectedStyle !== null && Boolean(hairstyleImages[selectedStyle]);
   const activeStyleImg = isComparing ? hairstyleImages[selectedStyle!] : null;
+
+  const isProcessing = analyzing || analysisResult !== null || generatingStyleIndex !== null;
 
   return (
     <div className="dashboard-container">
@@ -237,7 +277,7 @@ export default function Dashboard() {
       </header>
 
       <main className="dash-content">
-        <div className="analysis-grid">
+        <div className={`analysis-grid ${!isProcessing ? "centered" : ""}`}>
 
           {/* LEFT: UPLOAD / PREVIEW / COMPARISON SLIDER */}
           <div className="upload-section slide-up">
@@ -245,10 +285,16 @@ export default function Dashboard() {
 
             {!preview ? (
               <>
-                <div className="upload-box" onClick={() => fileInputRef.current?.click()}>
+                <div 
+                  className={`upload-box ${isDragging ? "dragging" : ""}`} 
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
                   <div className="upload-icon-wrapper"><Upload size={32} /></div>
-                  <p>Upload Front-Facing Portrait</p>
-                  <span className="upload-hint">Ensure good lighting and neutral expression.</span>
+                  <p>{isDragging ? "Drop image here" : "Upload Front-Facing Portrait"}</p>
+                  <span className="upload-hint">Ensure good lighting and neutral expression. Or drag and drop.</span>
                 </div>
 
                 <div className="upload-actions">
@@ -307,38 +353,16 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  {generatingStyleIndex !== null && (
+                  {generatingStyleIndex !== null && !isComparing && (
                     <div className="scan-overlay" style={{ background: "rgba(0,0,0,0.7)" }}>
                       <Loader2 className="spinner" size={32} style={{ color: "var(--accent)", marginBottom: "1rem" }} />
-                      <div style={{ textAlign: "center", lineHeight: 1.5, fontSize: "1rem", letterSpacing: "0.05em", color: "var(--foreground)" }}>
+                      <div style={{ textAlign: "center", lineHeight: 1.5, fontSize: "1rem", letterSpacing: "0.05em", color: "#ffffff" }}>
                         Generating how you will look<br/>with <span style={{ color: "var(--accent)", fontWeight: 600 }}>{hairstyleNames[generatingStyleIndex]}</span>...
                       </div>
                     </div>
                   )}
 
-                  {/* Face dots */}
-                  {analysisResult && !isComparing &&
-                    FACE_DOTS.map((dot) => {
-                      const pos = dotPositions[dot.key] || DEFAULT_POSITIONS[dot.key];
-                      return (
-                        <div
-                          key={dot.key}
-                          className="face-dot-wrapper"
-                          style={{ top: `${pos.y}%`, left: `${pos.x}%` }}
-                          onMouseEnter={() => setActiveTooltip(dot.key)}
-                          onMouseLeave={() => setActiveTooltip(null)}
-                        >
-                          <div className="face-dot" style={{ "--dot-color": dot.color } as DotColorStyle} />
-                          <div className="dot-ring" style={{ "--dot-color": dot.color } as DotColorStyle} />
-                          {activeTooltip === dot.key && (
-                            <div className="dot-tooltip">
-                              <div className="tooltip-label">{dot.icon} {dot.label}</div>
-                              <p>{analysisResult[dot.key]}</p>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                  {/* Face dots removed per user request */}
                 </div>
 
                 {/* ── STYLE PICKER ── */}
@@ -372,14 +396,18 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                <button className="luxury-button mt-4" onClick={handleAnalyze} disabled={analyzing}>
-                  {analyzing ? (
+                <button 
+                  className="luxury-button mt-4" 
+                  onClick={handleAnalyze} 
+                  disabled={analyzing || generatingStyleIndex !== null || analysisResult !== null}
+                >
+                  {analyzing || generatingStyleIndex !== null ? (
                     <span className="flex-center">
                       <Loader2 className="spinner mr-2" size={18} />Processing…
                     </span>
                   ) : "Initialize Analysis"}
                 </button>
-                <button className="reset-button mt-2" onClick={handleReset} disabled={analyzing}>
+                <button className="reset-button mt-2" onClick={handleReset}>
                   Reset
                 </button>
               </div>
@@ -403,42 +431,42 @@ export default function Dashboard() {
           </div>
 
           {/* RIGHT: ANALYSIS CARDS */}
-          <div className="results-section slide-up" style={{ animationDelay: "0.2s" }}>
-            {analysisResult && (
-              <div className="analysis-cards fade-in">
-                <h3 className="results-heading">Structural Findings</h3>
-                <div className="cards-list">
-                  {FACE_DOTS.map((dot, i) => (
-                    <div
-                      key={dot.key}
-                      className="analysis-card slide-up"
-                      style={{ animationDelay: `${i * 0.1}s`, "--card-color": dot.color } as CardColorStyle}
-                    >
-                      <div className="card-header">
-                        <span className="card-icon" style={{ color: dot.color }}>{dot.icon}</span>
-                        <span className="card-label">{dot.label}</span>
-                        <span className="card-dot" style={{ background: dot.color }} />
+          {isProcessing && (
+            <div className="results-section slide-up" style={{ animationDelay: "0.2s" }}>
+              {analysisResult ? (
+                <div className="analysis-cards fade-in">
+                  <h3 className="results-heading">Structural Findings</h3>
+                  <div className="cards-list">
+                    {FACE_DOTS.map((dot, i) => (
+                      <div
+                        key={dot.key}
+                        className="analysis-card slide-up"
+                        style={{ animationDelay: `${i * 0.1}s`, "--card-color": dot.color } as CardColorStyle}
+                      >
+                        <div className="card-header">
+                          <span className="card-icon" style={{ color: dot.color }}>{dot.icon}</span>
+                          <span className="card-label">{dot.label}</span>
+                          <span className="card-dot" style={{ background: dot.color }} />
+                        </div>
+                        <p className="card-text">{analysisResult[dot.key]}</p>
                       </div>
-                      <p className="card-text">{analysisResult[dot.key]}</p>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {!analysisResult && (
-              <div className="empty-results">
-                <div className="empty-grid">
-                  {[...Array(4)].map((_, i) => (
-                    <div key={i} className="empty-card" style={{ animationDelay: `${i * 0.15}s` }}>
-                      <div className="empty-icon">◈</div>
-                    </div>
-                  ))}
+              ) : (
+                <div className="empty-results">
+                  <div className="empty-grid">
+                    {[...Array(4)].map((_, i) => (
+                      <div key={i} className="empty-card" style={{ animationDelay: `${i * 0.15}s` }}>
+                        <div className="empty-icon">◈</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="empty-hint">Analyzing biometrics...</p>
                 </div>
-                <p className="empty-hint">Upload a photo to begin your structural analysis</p>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
 
@@ -474,9 +502,10 @@ export default function Dashboard() {
           opacity: 1;
         }
 
-        .dash-content { flex: 1; padding: 4rem; max-width: 1600px; margin: 0 auto; width: 100%; }
+        .dash-content { flex: 1; padding: 4rem; max-width: 1600px; margin: 0 auto; width: 100%; transition: all 0.5s ease; }
 
-        .analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; min-height: 60vh; }
+        .analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; min-height: 60vh; transition: all 0.5s ease; width: 100%; }
+        .analysis-grid.centered { grid-template-columns: 1fr; max-width: 700px; margin: 0 auto; gap: 0; }
 
         .section-title {
           font-size: 1rem; margin-bottom: 2rem;
@@ -491,8 +520,13 @@ export default function Dashboard() {
           background: rgba(255,255,255,0.02); height: 500px;
         }
         .upload-box:hover { border-color: var(--accent); background: rgba(212,175,55,0.05); }
+        .upload-box.dragging {
+          border-color: var(--accent); background: rgba(212,175,55,0.1);
+          transform: scale(1.02);
+        }
         .upload-icon-wrapper { color: var(--accent); margin-bottom: 1.5rem; }
-        .upload-box p { font-family: var(--font-display); font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .upload-box p { font-family: var(--font-display); font-size: 1.5rem; margin-bottom: 0.5rem; transition: color 0.3s ease; }
+        .upload-box.dragging p { color: var(--accent); }
         .upload-hint { font-size: 0.85rem; opacity: 0.5; }
 
         .upload-actions {
@@ -660,42 +694,7 @@ export default function Dashboard() {
         .scan-label { font-size: 0.8rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
         @keyframes scanDown { 0% { top: 0; } 100% { top: 100%; } }
 
-        /* FACE DOTS */
-        .face-dot-wrapper { position: absolute; transform: translate(-50%, -50%); cursor: pointer; z-index: 40; }
-        .face-dot {
-          width: 12px; height: 12px; border-radius: 50%;
-          background: var(--dot-color); box-shadow: 0 0 8px var(--dot-color);
-          animation: dotPulse 2s ease-in-out infinite; position: relative; z-index: 2;
-        }
-        .dot-ring {
-          position: absolute; top: 50%; left: 50%;
-          transform: translate(-50%, -50%);
-          width: 28px; height: 28px; border-radius: 50%;
-          border: 1px solid var(--dot-color); opacity: 0.5;
-          animation: ringPulse 2s ease-in-out infinite;
-        }
-        @keyframes dotPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.2); } }
-        @keyframes ringPulse { 0%,100% { transform: translate(-50%,-50%) scale(1); opacity:0.5; } 50% { transform: translate(-50%,-50%) scale(1.3); opacity:0.15; } }
 
-        /* TOOLTIP */
-        .dot-tooltip {
-          position: absolute; bottom: calc(100% + 16px); left: 50%;
-          transform: translateX(-50%);
-          background: rgba(12,12,12,0.97); border: 1px solid rgba(255,255,255,0.15);
-          padding: 0.75rem 1rem; width: 240px;
-          font-size: 0.85rem; line-height: 1.6; color: #f4f4f5;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.8); pointer-events: none;
-          animation: tooltipIn 0.15s ease; z-index: 120;
-        }
-        .dot-tooltip::after {
-          content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-          border: 6px solid transparent; border-top-color: rgba(255,255,255,0.15);
-        }
-        .tooltip-label { font-family: var(--font-display); font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 0.35rem; color: rgba(255,255,255,0.5); }
-        @keyframes tooltipIn {
-          from { opacity: 0; transform: translateX(-50%) translateY(4px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
 
         /* BUTTONS */
         .reset-button {

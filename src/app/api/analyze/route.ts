@@ -20,11 +20,7 @@ Final Output: Return ONLY a valid JSON object with exactly these keys. No markdo
 - "vertical_proportions": A concise 1-2 sentence finding and recommendation about the vertical face length.
 - "jawline_projection": A concise 1-2 sentence finding and recommendation about the jaw shape and projection.
 - "best_styles_summary": A single string listing the best 3 hairstyle names separated by commas (e.g. 'Textured Crop, Buzz Cut, Classic Taper').
-- "dot_positions": An object with four keys, each containing the approximate position of that anatomical marker on the FACE in the image, expressed as percentages (0-100) of the image width (x) and image height (y):
-  - "facial_thirds": { "x": <number>, "y": <number> } — center of the forehead
-  - "symmetry": { "x": <number>, "y": <number> } — bridge of the nose / between the eyes
-  - "vertical_proportions": { "x": <number>, "y": <number> } — tip of the nose (midpoint vertically)
-  - "jawline_projection": { "x": <number>, "y": <number> } — center of the chin`;
+`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -73,7 +69,7 @@ export async function POST(req: NextRequest) {
     let verticalProportions = "";
     let jawlineProjection = "";
     let stylesToGenerate = "";
-    let dotPositions: Record<string, { x: number; y: number }> | null = null;
+    
 
     try {
       const parsed = JSON.parse(textResult);
@@ -82,8 +78,8 @@ export async function POST(req: NextRequest) {
       verticalProportions = parsed.vertical_proportions || "";
       jawlineProjection = parsed.jawline_projection || "";
       stylesToGenerate = parsed.best_styles_summary || textResult;
-      dotPositions = parsed.dot_positions || null;
-      console.log(`[API Route] Successfully parsed JSON. Styles: "${stylesToGenerate}", Dots:`, dotPositions);
+      
+      console.log(`[API Route] Successfully parsed JSON. Styles: "${stylesToGenerate}"`);
     } catch (e) {
       console.warn("[API Route] Failed to parse JSON response:", e);
       facialThirds = textResult;
@@ -100,7 +96,6 @@ export async function POST(req: NextRequest) {
         vertical_proportions: verticalProportions,
         jawline_projection: jawlineProjection,
       },
-      dot_positions: dotPositions,
       best_styles_summary: stylesToGenerate,
     });
 
